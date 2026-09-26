@@ -89,9 +89,9 @@
     display: grid; place-items: center; position: relative;
   }
   .slide img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
-  .slide iframe {
-    width: 100%; height: min(100%, 100vw * 16 / 9); border: 0; background: #000;
-  }
+  /* Clear of the top bar, so the player's own buttons never sit under the count and the X. */
+  .slide.video { padding: calc(env(safe-area-inset-top, 0px) + 64px) 0 calc(env(safe-area-inset-bottom, 0px) + 12px); }
+  .slide video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
   .slide .gone { position: static; }
   .spinner {
     position: absolute; width: 32px; height: 32px; border-radius: 50%;
@@ -156,15 +156,19 @@
 
   // Drive's image server: w800 for the grid, s0 for the original, full quality.
   function img(id, size) { return "https://lh3.googleusercontent.com/d/" + id + "=" + size; }
-  function fileLink(id) { return "https://drive.google.com/file/d/" + id + "/view"; }
+  // The original file as uploaded, with byte ranges, so the phone's own player can stream and
+  // seek it. Drive's embedded player was the first try: on an iPhone it drew its controls on
+  // top of Safari's - two players at once - and always started at 360p (2026-09-26). This is
+  // one player, at the quality the video was shot in.
+  function original(id) { return "https://drive.usercontent.google.com/download?id=" + id + "&export=download&confirm=t"; }
 
   var photos = items.filter(function (it) { return !it.video; }).length;
   var videos = items.length - photos;
   function n(count, word) { return count + " " + word + (count === 1 ? "" : "s"); }
-  var heading = videos === 0 ? n(photos, "photo")
-    : photos === 0 ? n(videos, "video")
-    : n(photos, "photo") + " and " + n(videos, "video");
-  heading = heading.charAt(0).toUpperCase() + heading.slice(1);
+  // Capitalised like the app's "3 Photos (HD)" line that links here.
+  var heading = videos === 0 ? n(photos, "Photo")
+    : photos === 0 ? n(videos, "Video")
+    : n(photos, "Photo") + " and " + n(videos, "Video");
   document.title = heading;
 
   function el(tag, attrs, children) {
@@ -226,22 +230,24 @@
   });
   var current = -1;
 
-  // Originals are 3-5 MB, so only the one on screen and its neighbours load. A video's
-  // player exists only while it's the one on screen - taking it away is what stops it
-  // playing on after a swipe.
+  // Originals are 3-5 MB, so only the one on screen and its neighbours load. A video is
+  // made when it's first reached - its still as the poster, only its header fetched until
+  // Play - and paused whenever it's swiped away.
   function fill(index) {
     slides.forEach(function (s, i) {
       var it = items[i];
       var near = Math.abs(i - index) <= 1;
       if (it.video) {
-        var frame = s.querySelector("iframe");
-        if (i === index && !frame) {
-          s.appendChild(el("iframe", {
-            src: "https://drive.google.com/file/d/" + it.id + "/preview",
-            allow: "autoplay; fullscreen", allowfullscreen: "", title: "Video " + (i + 1)
-          }));
-        } else if (i !== index && frame) {
-          frame.remove();
+        var video = s.querySelector("video");
+        if (i === index && !video) {
+          s.classList.add("video");
+          video = el("video", {
+            src: original(it.id), poster: img(it.id, "w1600"),
+            controls: "", playsinline: "", preload: "metadata", "aria-label": "Video " + (i + 1)
+          });
+          s.appendChild(video);
+        } else if (i !== index && video) {
+          video.pause();
         }
       } else if (near && !s.firstChild) {
         var spin = el("div", { class: "spinner" });
@@ -259,7 +265,9 @@
     if (index === current) return;
     current = index;
     count.textContent = items.length > 1 ? (index + 1) + " / " + items.length : "";
-    full.href = items[index].video ? fileLink(items[index].id) : img(items[index].id, "s0");
+    // Photos: the original, where press-and-hold saves it. Videos: the file itself, which
+    // the phone offers to download.
+    full.href = items[index].video ? original(items[index].id) : img(items[index].id, "s0");
     fill(index);
   }
 
@@ -276,7 +284,7 @@
   function close() {
     viewer.hidden = true;
     document.body.style.overflow = "";
-    slides.forEach(function (s) { var f = s.querySelector("iframe"); if (f) f.remove(); });
+    slides.forEach(function (s) { var v = s.querySelector("video"); if (v) v.pause(); });
     current = -1;
   }
 
