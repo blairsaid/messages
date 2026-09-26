@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<!-- The photos load from Google Drive; don't tell Google which page asked. -->
-<meta name="referrer" content="no-referrer">
+<!-- Google sees only "blairsaid.github.io" asked - never the page path or the '#' with the
+     file ids. The site name is needed: the video API key below is restricted to it. -->
+<meta name="referrer" content="origin">
 <meta name="theme-color" content="#0b0b0c">
 <title>Photos</title>
 <!--
@@ -91,7 +92,7 @@
   .slide img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
   /* Clear of the top bar, so the player's own buttons never sit under the count and the X. */
   .slide.video { padding: calc(env(safe-area-inset-top, 0px) + 64px) 0 calc(env(safe-area-inset-bottom, 0px) + 12px); }
-  .slide video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+  .slide video, .slide iframe { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; border: 0; }
   .slide .gone { position: static; }
   .spinner {
     position: absolute; width: 32px; height: 32px; border-radius: 50%;
@@ -156,11 +157,19 @@
 
   // Drive's image server: w800 for the grid, s0 for the original, full quality.
   function img(id, size) { return "https://lh3.googleusercontent.com/d/" + id + "=" + size; }
-  // The original file as uploaded, with byte ranges, so the phone's own player can stream and
-  // seek it. Drive's embedded player was the first try: on an iPhone it drew its controls on
-  // top of Safari's - two players at once - and always started at 360p (2026-09-26). This is
-  // one player, at the quality the video was shot in.
+  // Drive's download address: for the ↗ button. Tapping it is a visit, which Drive allows.
   function original(id) { return "https://drive.usercontent.google.com/download?id=" + id + "&export=download&confirm=t"; }
+
+  // Videos stream through the Drive API: the original file, in the phone's own player, at the
+  // quality it was shot in. Not through the download address above - Drive answers 403 to any
+  // other website's page asking to play from it, which is what showed as Safari's crossed-out
+  // play icon (2026-09-26). The API allows it, with a key: a public identifier for the Cloud
+  // project, restricted to the Drive API and to this site, that can only read files already
+  // shared by link. Without a key - or if the stream fails anyway - a video falls back to
+  // Drive's own player: it plays, but at Drive's quality, with Drive's controls.
+  var VIDEO_API_KEY = "AIzaSyCIFkkqKjMxYTk1wea6_MQqjNrSIZ-_Uwk";
+  function stream(id) { return "https://www.googleapis.com/drive/v3/files/" + id + "?alt=media&key=" + VIDEO_API_KEY; }
+  function drivePlayer(id) { return "https://drive.google.com/file/d/" + id + "/preview"; }
 
   var photos = items.filter(function (it) { return !it.video; }).length;
   var videos = items.length - photos;
@@ -208,7 +217,11 @@
     var tile = el("button", { class: "tile", "aria-label": (it.video ? "Video " : "Photo ") + (index + 1) });
     var thumb = el("img", { src: img(it.id, "w800"), alt: "", loading: index < 8 ? "eager" : "lazy", decoding: "async" });
     tile.appendChild(thumb);
-    onGone(thumb, tile);
+    // Drive makes a video's still a minute or two after upload, and the link can arrive
+    // sooner - the video itself plays from the first second. So a video with no still yet
+    // is just a dark tile with its play mark, not "No longer available".
+    if (it.video) thumb.addEventListener("error", function () { thumb.remove(); });
+    else onGone(thumb, tile);
     if (it.video) tile.appendChild(el("div", { class: "play" }, [el("span")]));
     tile.addEventListener("click", function () { open(index); });
     grid.appendChild(tile);
@@ -239,15 +252,22 @@
       var near = Math.abs(i - index) <= 1;
       if (it.video) {
         var video = s.querySelector("video");
-        if (i === index && !video) {
+        if (i === index && !s.firstChild) {
           s.classList.add("video");
-          video = el("video", {
-            src: original(it.id), poster: img(it.id, "w1600"),
-            controls: "", playsinline: "", preload: "metadata", "aria-label": "Video " + (i + 1)
-          });
-          s.appendChild(video);
+          if (VIDEO_API_KEY) {
+            video = el("video", {
+              src: stream(it.id), poster: img(it.id, "w1600"),
+              controls: "", playsinline: "", preload: "metadata", "aria-label": "Video " + (i + 1)
+            });
+            video.addEventListener("error", function () { useDrivePlayer(s, it.id); });
+            s.appendChild(video);
+          } else {
+            useDrivePlayer(s, it.id);
+          }
         } else if (i !== index && video) {
           video.pause();
+        } else if (i !== index && s.querySelector("iframe")) {
+          s.innerHTML = "";
         }
       } else if (near && !s.firstChild) {
         var spin = el("div", { class: "spinner" });
@@ -259,6 +279,11 @@
         s.appendChild(image);
       }
     });
+  }
+
+  function useDrivePlayer(slide, id) {
+    slide.innerHTML = "";
+    slide.appendChild(el("iframe", { src: drivePlayer(id), allow: "autoplay; fullscreen", allowfullscreen: "" }));
   }
 
   function show(index) {
@@ -284,7 +309,10 @@
   function close() {
     viewer.hidden = true;
     document.body.style.overflow = "";
-    slides.forEach(function (s) { var v = s.querySelector("video"); if (v) v.pause(); });
+    slides.forEach(function (s) {
+      var v = s.querySelector("video"); if (v) v.pause();
+      if (s.querySelector("iframe")) s.innerHTML = "";
+    });
     current = -1;
   }
 
