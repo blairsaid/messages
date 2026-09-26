@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<!-- The photos load from Google Drive; don't tell Google which page asked. -->
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0b0b0c">
+<title>Photos</title>
+<!--
+  Gallery for HD shares from the Messages app.
+
+  This page holds no photos. The link that opens it carries the Google Drive file ids after
+  the '#', which a browser never sends to the server, and each photo and video loads straight
+  from Drive, where it was shared as anyone-with-the-link. Drive's own folder page was the
+  first thing tried, and on an iPhone it drops to a clunky "mobile" version that keeps asking
+  to sign in or get the app (2026-09-26). Single-file Drive links behave, so this page puts
+  those single files into one gallery.
+
+  Link format:  g.html#t=<title>&f=<drive folder id>&i=p<photo id>,v<video id>,...
+-->
+<style>
+  :root {
+    --bg: #0b0b0c;
+    --panel: #161618;
+    --text: #f2f2f3;
+    --muted: #9a9aa2;
+    --accent: #7ab4ff;
+    --gap: 3px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  header {
+    padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px 14px;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  .drive {
+    color: var(--accent); text-decoration: none; font-size: 14px; font-weight: 550;
+    padding: 8px 12px; border: 1px solid #2c2c31; border-radius: 999px; white-space: nowrap;
+  }
+  .grid {
+    display: grid; gap: var(--gap);
+    grid-template-columns: repeat(2, 1fr);
+  }
+  @media (min-width: 600px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (min-width: 1000px) { .grid { grid-template-columns: repeat(4, 1fr); max-width: 1200px; margin: 0 auto; } }
+  .tile {
+    position: relative; aspect-ratio: 1; overflow: hidden; background: var(--panel);
+    border: 0; padding: 0; cursor: pointer; display: block; width: 100%;
+  }
+  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .play {
+    position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+  }
+  .play span {
+    width: 52px; height: 52px; border-radius: 50%; background: rgba(0,0,0,.45);
+    border: 2px solid rgba(255,255,255,.9); display: grid; place-items: center;
+  }
+  .play span::after {
+    content: ""; margin-left: 4px; border-style: solid; border-width: 10px 0 10px 17px;
+    border-color: transparent transparent transparent #fff;
+  }
+  .gone {
+    position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+    color: var(--muted); font-size: 13px; padding: 12px;
+  }
+  footer { color: var(--muted); font-size: 13px; text-align: center; padding: 18px 16px calc(env(safe-area-inset-bottom, 0px) + 24px); }
+  .empty { padding: 30vh 24px 0; text-align: center; color: var(--muted); }
+
+  /* ---- full-screen viewer: native swipe via scroll-snap, no gesture code ---- */
+  .viewer { position: fixed; inset: 0; background: #000; z-index: 10; }
+  .viewer[hidden] { display: none; }
+  .track {
+    position: absolute; inset: 0; display: flex; overflow-x: auto; overflow-y: hidden;
+    scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior: contain;
+  }
+  .track::-webkit-scrollbar { display: none; }
+  .slide {
+    flex: 0 0 100%; height: 100%; scroll-snap-align: center; scroll-snap-stop: always;
+    display: grid; place-items: center; position: relative;
+  }
+  .slide img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  .slide iframe {
+    width: 100%; height: min(100%, 100vw * 16 / 9); border: 0; background: #000;
+  }
+  .slide .gone { position: static; }
+  .spinner {
+    position: absolute; width: 32px; height: 32px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.25); border-top-color: #fff; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .bar {
+    position: absolute; left: 0; right: 0; top: 0; z-index: 2;
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(rgba(0,0,0,.55), transparent);
+    pointer-events: none;
+  }
+  .bar > * { pointer-events: auto; }
+  .count { font-size: 15px; font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,.6); padding-left: 6px; }
+  .btn {
+    width: 40px; height: 40px; border-radius: 50%; border: 0; cursor: pointer;
+    background: rgba(0,0,0,.45); color: #fff; font-size: 20px; line-height: 40px;
+    display: grid; place-items: center; text-decoration: none;
+  }
+  .actions { display: flex; gap: 8px; }
+  .btn svg { width: 20px; height: 20px; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+
+<div class="viewer" id="viewer" hidden>
+  <div class="track" id="track"></div>
+  <div class="bar">
+    <div class="count" id="count"></div>
+    <div class="actions">
+      <a class="btn" id="full" target="_blank" rel="noopener" aria-label="Open full size">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6M20 4l-8 8M10 20H4v-6"/></svg>
+      </a>
+      <button class="btn" id="close" aria-label="Close">&#x2715;</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- the link --------------------------------------------------------------------------
+  var params = {};
+  location.hash.replace(/^#/, "").split("&").forEach(function (pair) {
+    var i = pair.indexOf("=");
+    if (i > 0) params[pair.slice(0, i)] = decodeURIComponent(pair.slice(i + 1));
+  });
+  var ID = /^[A-Za-z0-9_-]{10,}$/;
+  var items = (params.i || "").split(",").map(function (s) {
+    return { video: s.charAt(0) === "v", id: s.slice(1) };
+  }).filter(function (it) { return ID.test(it.id); });
+  var folder = ID.test(params.f || "") ? params.f : null;
+
+  var app = document.getElementById("app");
+  if (!items.length) {
+    app.innerHTML = '<p class="empty">This link is incomplete - ask for it to be sent again.</p>';
+    return;
+  }
+
+  // Drive's image server: w800 for the grid, s0 for the original, full quality.
+  function img(id, size) { return "https://lh3.googleusercontent.com/d/" + id + "=" + size; }
+  function fileLink(id) { return "https://drive.google.com/file/d/" + id + "/view"; }
+
+  var photos = items.filter(function (it) { return !it.video; }).length;
+  var videos = items.length - photos;
+  function n(count, word) { return count + " " + word + (count === 1 ? "" : "s"); }
+  var heading = videos === 0 ? n(photos, "photo")
+    : photos === 0 ? n(videos, "video")
+    : n(photos, "photo") + " and " + n(videos, "video");
+  heading = heading.charAt(0).toUpperCase() + heading.slice(1);
+  document.title = heading;
+
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === "text") e.textContent = attrs[k]; else e.setAttribute(k, attrs[k]);
+    });
+    (children || []).forEach(function (c) { e.appendChild(c); });
+    return e;
+  }
+
+  // A file cleared from Drive (Settings > Clear old uploads) fails to load: say so.
+  function onGone(image, box) {
+    image.addEventListener("error", function () {
+      image.remove();
+      box.appendChild(el("div", { class: "gone", text: "No longer available" }));
+    });
+  }
+
+  // ---- the grid --------------------------------------------------------------------------
+  var head = el("header", {}, [
+    el("div", {}, [
+      el("h1", { text: heading }),
+      params.t ? el("div", { class: "sub", text: params.t }) : el("span")
+    ])
+  ]);
+  if (folder) {
+    head.appendChild(el("a", {
+      class: "drive", href: "https://drive.google.com/drive/folders/" + folder,
+      target: "_blank", rel: "noopener", text: "Open in Google Drive"
+    }));
+  }
+  app.appendChild(head);
+
+  var grid = el("div", { class: "grid" });
+  items.forEach(function (it, index) {
+    var tile = el("button", { class: "tile", "aria-label": (it.video ? "Video " : "Photo ") + (index + 1) });
+    var thumb = el("img", { src: img(it.id, "w800"), alt: "", loading: index < 8 ? "eager" : "lazy", decoding: "async" });
+    tile.appendChild(thumb);
+    onGone(thumb, tile);
+    if (it.video) tile.appendChild(el("div", { class: "play" }, [el("span")]));
+    tile.addEventListener("click", function () { open(index); });
+    grid.appendChild(tile);
+  });
+  app.appendChild(grid);
+  app.appendChild(el("footer", {
+    text: photos ? "Tap a photo to see it full size. Press and hold one to save it." : "Tap a video to play it."
+  }));
+
+  // ---- the viewer ------------------------------------------------------------------------
+  var viewer = document.getElementById("viewer");
+  var track = document.getElementById("track");
+  var count = document.getElementById("count");
+  var full = document.getElementById("full");
+  var slides = items.map(function (it) {
+    var s = el("div", { class: "slide" });
+    track.appendChild(s);
+    return s;
+  });
+  var current = -1;
+
+  // Originals are 3-5 MB, so only the one on screen and its neighbours load. A video's
+  // player exists only while it's the one on screen - taking it away is what stops it
+  // playing on after a swipe.
+  function fill(index) {
+    slides.forEach(function (s, i) {
+      var it = items[i];
+      var near = Math.abs(i - index) <= 1;
+      if (it.video) {
+        var frame = s.querySelector("iframe");
+        if (i === index && !frame) {
+          s.appendChild(el("iframe", {
+            src: "https://drive.google.com/file/d/" + it.id + "/preview",
+            allow: "autoplay; fullscreen", allowfullscreen: "", title: "Video " + (i + 1)
+          }));
+        } else if (i !== index && frame) {
+          frame.remove();
+        }
+      } else if (near && !s.firstChild) {
+        var spin = el("div", { class: "spinner" });
+        var image = el("img", { src: img(it.id, "s0"), alt: "Photo " + (i + 1), decoding: "async" });
+        image.addEventListener("load", function () { spin.remove(); });
+        image.addEventListener("error", function () { spin.remove(); });
+        onGone(image, s);
+        s.appendChild(spin);
+        s.appendChild(image);
+      }
+    });
+  }
+
+  function show(index) {
+    if (index === current) return;
+    current = index;
+    count.textContent = items.length > 1 ? (index + 1) + " / " + items.length : "";
+    full.href = items[index].video ? fileLink(items[index].id) : img(items[index].id, "s0");
+    fill(index);
+  }
+
+  function open(index) {
+    viewer.hidden = false;
+    document.body.style.overflow = "hidden";
+    track.scrollLeft = index * track.clientWidth;
+    current = -1;
+    show(index);
+    // Back (or the iPhone's edge swipe) closes the viewer rather than leaving the page.
+    history.pushState({ viewer: true }, "");
+  }
+
+  function close() {
+    viewer.hidden = true;
+    document.body.style.overflow = "";
+    slides.forEach(function (s) { var f = s.querySelector("iframe"); if (f) f.remove(); });
+    current = -1;
+  }
+
+  var settle;
+  track.addEventListener("scroll", function () {
+    clearTimeout(settle);
+    settle = setTimeout(function () {
+      show(Math.round(track.scrollLeft / track.clientWidth));
+    }, 80);
+  }, { passive: true });
+
+  window.addEventListener("resize", function () {
+    if (!viewer.hidden && current >= 0) track.scrollLeft = current * track.clientWidth;
+  });
+
+  document.getElementById("close").addEventListener("click", function () { history.back(); });
+  window.addEventListener("popstate", function () { if (!viewer.hidden) close(); });
+  document.addEventListener("keydown", function (e) {
+    if (viewer.hidden) return;
+    if (e.key === "Escape") history.back();
+    if (e.key === "ArrowRight" && current < items.length - 1) track.scrollTo({ left: (current + 1) * track.clientWidth, behavior: "smooth" });
+    if (e.key === "ArrowLeft" && current > 0) track.scrollTo({ left: (current - 1) * track.clientWidth, behavior: "smooth" });
+  });
+})();
+</script>
+</body>
+</html>
