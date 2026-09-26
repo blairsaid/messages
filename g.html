@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <!-- Google sees only "blairsaid.github.io" asked - never the page path or the '#' with the
-     file ids. The site name is needed: the video API key below is restricted to it. -->
+     file ids. The video API key below is not restricted to this site, though it was at
+     first: an iPhone plays video through a system player that doesn't say which site asked,
+     so Google refused it (2026-09-26). It is restricted to the Drive API only. -->
 <meta name="referrer" content="origin">
 <meta name="theme-color" content="#0b0b0c">
 <title>Photos</title>
@@ -92,7 +94,12 @@
   .slide img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
   /* Clear of the top bar, so the player's own buttons never sit under the count and the X. */
   .slide.video { padding: calc(env(safe-area-inset-top, 0px) + 64px) 0 calc(env(safe-area-inset-bottom, 0px) + 12px); }
-  .slide video, .slide iframe { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; border: 0; }
+  .slide video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+  .cant { text-align: center; padding: 24px; color: var(--muted); }
+  .cant p { margin: 0 0 16px; color: var(--text); font-size: 17px; }
+  .cant a { display: inline-block; margin: 6px; padding: 10px 16px; border-radius: 999px;
+    border: 1px solid #2c2c31; color: var(--accent); text-decoration: none; font-weight: 550; }
+  .cant small { display: block; margin-top: 14px; font-size: 12px; }
   .slide .gone { position: static; }
   .spinner {
     position: absolute; width: 32px; height: 32px; border-radius: 50%;
@@ -165,11 +172,12 @@
   // other website's page asking to play from it, which is what showed as Safari's crossed-out
   // play icon (2026-09-26). The API allows it, with a key: a public identifier for the Cloud
   // project, restricted to the Drive API and to this site, that can only read files already
-  // shared by link. Without a key - or if the stream fails anyway - a video falls back to
-  // Drive's own player: it plays, but at Drive's quality, with Drive's controls.
+  // shared by link. If the stream fails anyway, the slide says so and offers Drive's own
+  // player or the download - never switching on its own: an automatic switch to Drive's
+  // player brought back the doubled controls and 360p (2026-09-26).
   var VIDEO_API_KEY = "AIzaSyCIFkkqKjMxYTk1wea6_MQqjNrSIZ-_Uwk";
   function stream(id) { return "https://www.googleapis.com/drive/v3/files/" + id + "?alt=media&key=" + VIDEO_API_KEY; }
-  function drivePlayer(id) { return "https://drive.google.com/file/d/" + id + "/preview"; }
+  function drivePage(id) { return "https://drive.google.com/file/d/" + id + "/view"; }
 
   var photos = items.filter(function (it) { return !it.video; }).length;
   var videos = items.length - photos;
@@ -259,15 +267,13 @@
               src: stream(it.id), poster: img(it.id, "w1600"),
               controls: "", playsinline: "", preload: "metadata", "aria-label": "Video " + (i + 1)
             });
-            video.addEventListener("error", function () { useDrivePlayer(s, it.id); });
+            video.addEventListener("error", function () { cantPlay(s, it.id, video.error && video.error.code); });
             s.appendChild(video);
           } else {
-            useDrivePlayer(s, it.id);
+            cantPlay(s, it.id, "no key");
           }
         } else if (i !== index && video) {
           video.pause();
-        } else if (i !== index && s.querySelector("iframe")) {
-          s.innerHTML = "";
         }
       } else if (near && !s.firstChild) {
         var spin = el("div", { class: "spinner" });
@@ -281,9 +287,14 @@
     });
   }
 
-  function useDrivePlayer(slide, id) {
+  function cantPlay(slide, id, why) {
     slide.innerHTML = "";
-    slide.appendChild(el("iframe", { src: drivePlayer(id), allow: "autoplay; fullscreen", allowfullscreen: "" }));
+    slide.appendChild(el("div", { class: "cant" }, [
+      el("p", { text: "This video can't play here." }),
+      el("a", { href: drivePage(id), target: "_blank", rel: "noopener", text: "Watch in Google Drive" }),
+      el("a", { href: original(id), target: "_blank", rel: "noopener", text: "Download" }),
+      el("small", { text: "(" + (why || "error") + ")" })
+    ]));
   }
 
   function show(index) {
@@ -309,10 +320,7 @@
   function close() {
     viewer.hidden = true;
     document.body.style.overflow = "";
-    slides.forEach(function (s) {
-      var v = s.querySelector("video"); if (v) v.pause();
-      if (s.querySelector("iframe")) s.innerHTML = "";
-    });
+    slides.forEach(function (s) { var v = s.querySelector("video"); if (v) v.pause(); });
     current = -1;
   }
 
