@@ -30,21 +30,20 @@
   anywhere, apart from the messages the owner chooses to send and the HD sharing described
   below.</p>
 
-  <h2>Google Drive (HD sharing)</h2>
+  <h2>HD sharing</h2>
   <p>When the owner turns on HD sharing, full-quality copies of photos and videos they send are
-  uploaded to a Google Drive account the owner controls. The app requests only the
-  <code>drive.file</code> permission, which limits it to files it has created itself; it cannot
-  read, change or delete anything else in that Drive or Google account.</p>
-  <p>Each uploaded file is shared as "anyone with the link can view", and that link is sent in
-  the message. Anyone the link reaches can view the file. Location data is removed from photos
-  before upload.</p>
-  <p>The Google sign-in is handled by Google Play services on the phone. Access can be withdrawn
-  at any time from the Google account's security settings, under third-party connections.</p>
+  uploaded to a Cloudflare R2 storage bucket the owner controls. Each message's files sit under
+  a long random address, and a link to them is sent in the message. Anyone the link reaches can
+  view the files; they cannot be found or listed without it. Location data is removed from
+  photos and videos before upload. The owner deletes old uploads from the app's settings, or
+  automatically after a set age.</p>
+  <p>The gallery page that shows them (on this site) holds no photos itself: it loads each file
+  straight from the bucket, and the part of the link that says which files never reaches this
+  site.</p>
 
   <h2>What is not collected</h2>
   <p>The app does not collect analytics, does not show advertising, and does not sell, rent or
-  share data with anyone. It uses Google user data only to upload and share the files described
-  above, and does not transfer it to third parties or use it for any other purpose.</p>
+  share data with anyone. It does not use any Google account data.</p>
 
   <h2>Contact</h2>
   <p>blair.messages.app@gmail.com</p>

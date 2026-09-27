@@ -16,17 +16,14 @@
   browser never sends to the server, and each photo and video loads straight from where the
   app uploaded it.
 
-  Cloudflare R2 (from 2026-09-26):
-    g.html#t=<title>&r=<public host>&m=<message folder>&i=P0.jpg,V1.mp4,...
-    Each file at https://<host>/hd/<folder>/<name>, its grid picture at <n>_t.jpg beside it.
-    Videos play in the phone's own player at full quality.
+  Link format:  g.html#t=<title>&r=<public host>&m=<message folder>&i=P0.jpg,V1.mp4,...
+  Each file is at https://<host>/hd/<folder>/<name> in the Cloudflare R2 bucket, with its grid
+  picture at <n>_t.jpg beside it. Videos play in the phone's own player at full quality.
 
-  Google Drive (older links):
-    g.html#t=<title>&f=<drive folder id>&i=p<photo id>,v<video id>,...
-    Photos load from Drive's image server. Videos can't: Google refuses to let another site's
-    page play a Drive video - its download address answers 403, and its API, with a key,
-    streamed briefly then blocked it as "automated queries" (2026-09-26). So a Drive video
-    offers Drive's own player instead. That dead end is why storage moved to R2.
+  The files were on Google Drive at first, and Google refuses to let another site's page play
+  a Drive video - its download address answered 403, and its API streamed briefly then blocked
+  it as "automated queries" (2026-09-26). That dead end is why storage moved to R2; Drive links
+  were then dropped from this page altogether.
 -->
 <style>
   :root {
@@ -51,10 +48,6 @@
   }
   h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: 14px; margin-top: 2px; }
-  .drive {
-    color: var(--accent); text-decoration: none; font-size: 14px; font-weight: 550;
-    padding: 8px 12px; border: 1px solid #2c2c31; border-radius: 999px; white-space: nowrap;
-  }
   .grid {
     display: grid; gap: var(--gap);
     grid-template-columns: repeat(2, 1fr);
@@ -155,24 +148,19 @@
     var i = pair.indexOf("=");
     if (i > 0) params[pair.slice(0, i)] = decodeURIComponent(pair.slice(i + 1));
   });
-  var ID = /^[A-Za-z0-9_-]{10,}$/;
   var NAME = /^[0-9]+\.[A-Za-z0-9]{1,5}$/;
   var host = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(params.r || "") ? params.r : null;
   var folderR2 = /^[A-Za-z0-9]{10,}$/.test(params.m || "") ? params.m : null;
   var r2Base = host && folderR2 ? "https://" + host + "/hd/" + folderR2 + "/" : null;
 
-  // Uppercase P/V: an R2 file by its name in the message's folder. Lowercase p/v: a Drive id.
+  // P or V - photo or video - then its name in the message's folder.
   var items = (params.i || "").split(",").map(function (s) {
     var kind = s.charAt(0);
     if ((kind === "P" || kind === "V") && r2Base && NAME.test(s.slice(1))) {
-      return { r2: true, video: kind === "V", name: s.slice(1) };
-    }
-    if ((kind === "p" || kind === "v") && ID.test(s.slice(1))) {
-      return { r2: false, video: kind === "v", id: s.slice(1) };
+      return { video: kind === "V", name: s.slice(1) };
     }
     return null;
   }).filter(Boolean);
-  var folder = ID.test(params.f || "") ? params.f : null;
 
   var app = document.getElementById("app");
   if (!items.length) {
@@ -180,16 +168,10 @@
     return;
   }
 
-  // Drive's image server: w800 for the grid, s0 for the original, full quality.
-  function img(id, size) { return "https://lh3.googleusercontent.com/d/" + id + "=" + size; }
-  // Drive's download address. Tapping it is a visit, which Drive allows.
-  function driveDownload(id) { return "https://drive.usercontent.google.com/download?id=" + id + "&export=download&confirm=t"; }
-  function drivePage(id) { return "https://drive.google.com/file/d/" + id + "/view"; }
-
   /** The file itself, full size - what the viewer shows and the ↗ button opens. */
-  function fullUrl(it) { return it.r2 ? r2Base + it.name : it.video ? driveDownload(it.id) : img(it.id, "s0"); }
+  function fullUrl(it) { return r2Base + it.name; }
   /** The small picture for the grid (and a video's poster). */
-  function thumbUrl(it) { return it.r2 ? r2Base + it.name.replace(/\.[^.]+$/, "") + "_t.jpg" : img(it.id, "w800"); }
+  function thumbUrl(it) { return r2Base + it.name.replace(/\.[^.]+$/, "") + "_t.jpg"; }
 
   var photos = items.filter(function (it) { return !it.video; }).length;
   var videos = items.length - photos;
@@ -209,7 +191,7 @@
     return e;
   }
 
-  // A file cleared from Drive (Settings > Clear old uploads) fails to load: say so.
+  // A file cleared from the bucket (Settings > Clear old uploads) fails to load: say so.
   function onGone(image, box) {
     image.addEventListener("error", function () {
       image.remove();
@@ -224,12 +206,6 @@
       params.t ? el("div", { class: "sub", text: params.t }) : el("span")
     ])
   ]);
-  if (folder) {
-    head.appendChild(el("a", {
-      class: "drive", href: "https://drive.google.com/drive/folders/" + folder,
-      target: "_blank", rel: "noopener", text: "Open in Google Drive"
-    }));
-  }
   app.appendChild(head);
 
   var grid = el("div", { class: "grid" });
@@ -238,18 +214,16 @@
     var thumb = el("img", { src: thumbUrl(it), alt: "", loading: index < 8 ? "eager" : "lazy", decoding: "async" });
     tile.appendChild(thumb);
     if (it.video) {
-      // No still (Drive makes one minutes after upload; the app's can fail to make): a dark
-      // tile with its play mark, not "No longer available" - the video itself may be fine.
+      // No still (the app couldn't make one): a dark tile with its play mark, not "No longer
+      // available" - the video itself may be fine.
       thumb.addEventListener("error", function () { thumb.remove(); });
-    } else if (it.r2) {
-      // An R2 photo without its grid picture falls back to the photo itself, once.
+    } else {
+      // A photo without its grid picture falls back to the photo itself, once.
       thumb.addEventListener("error", function onError() {
         thumb.removeEventListener("error", onError);
         onGone(thumb, tile);
         thumb.src = fullUrl(it);
       });
-    } else {
-      onGone(thumb, tile);
     }
     if (it.video) tile.appendChild(el("div", { class: "play" }, [el("span")]));
     tile.addEventListener("click", function () { open(index); });
@@ -283,19 +257,15 @@
         var video = s.querySelector("video");
         if (i === index && !s.firstChild) {
           s.classList.add("video");
-          if (it.r2) {
-            // The phone's own player, on the original file - one set of controls, full
-            // quality. If it can't, the slide says so and offers the file; it never swaps in
-            // another player on its own.
-            video = el("video", {
-              src: fullUrl(it), poster: thumbUrl(it),
-              controls: "", playsinline: "", preload: "metadata", "aria-label": "Video " + (i + 1)
-            });
-            video.addEventListener("error", function () { cantPlay(s, it, video.error && video.error.code); });
-            s.appendChild(video);
-          } else {
-            cantPlay(s, it, null);
-          }
+          // The phone's own player, on the original file - one set of controls, full quality.
+          // If it can't, the slide says so and offers the file; it never swaps in another
+          // player on its own.
+          video = el("video", {
+            src: fullUrl(it), poster: thumbUrl(it),
+            controls: "", playsinline: "", preload: "metadata", "aria-label": "Video " + (i + 1)
+          });
+          video.addEventListener("error", function () { cantPlay(s, it, video.error && video.error.code); });
+          s.appendChild(video);
         } else if (i !== index && video) {
           video.pause();
         }
@@ -311,15 +281,13 @@
     });
   }
 
-  /**
-   * A video this page can't play: an R2 one that failed (with the player's error code, for
-   * diagnosis) or any Drive one, which Google won't let a page like this play.
-   */
+  /** A video the phone couldn't play here, with the player's error code for diagnosis. */
   function cantPlay(slide, it, why) {
     slide.innerHTML = "";
-    var parts = [el("p", { text: it.r2 ? "This video can't play here." : "This video plays in Google Drive." })];
-    if (!it.r2) parts.push(el("a", { href: drivePage(it.id), target: "_blank", rel: "noopener", text: "Watch in Google Drive" }));
-    parts.push(el("a", { href: fullUrl(it), target: "_blank", rel: "noopener", text: "Download" }));
+    var parts = [
+      el("p", { text: "This video can't play here." }),
+      el("a", { href: fullUrl(it), target: "_blank", rel: "noopener", text: "Download" })
+    ];
     if (why) parts.push(el("small", { text: "(" + why + ")" }));
     slide.appendChild(el("div", { class: "cant" }, parts));
   }
