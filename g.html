@@ -4,24 +4,29 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<!-- Google sees only "blairsaid.github.io" asked - never the page path or the '#' with the
-     file ids. The video API key below is not restricted to this site, though it was at
-     first: an iPhone plays video through a system player that doesn't say which site asked,
-     so Google refused it (2026-09-26). It is restricted to the Drive API only. -->
+<!-- Where the files load from sees at most "blairsaid.github.io" - never the page path or
+     the '#' that says which files. -->
 <meta name="referrer" content="origin">
 <meta name="theme-color" content="#0b0b0c">
 <title>Photos</title>
 <!--
   Gallery for HD shares from the Messages app.
 
-  This page holds no photos. The link that opens it carries the Google Drive file ids after
-  the '#', which a browser never sends to the server, and each photo and video loads straight
-  from Drive, where it was shared as anyone-with-the-link. Drive's own folder page was the
-  first thing tried, and on an iPhone it drops to a clunky "mobile" version that keeps asking
-  to sign in or get the app (2026-09-26). Single-file Drive links behave, so this page puts
-  those single files into one gallery.
+  This page holds no photos. The link that opens it says which files after the '#', which a
+  browser never sends to the server, and each photo and video loads straight from where the
+  app uploaded it.
 
-  Link format:  g.html#t=<title>&f=<drive folder id>&i=p<photo id>,v<video id>,...
+  Cloudflare R2 (from 2026-09-26):
+    g.html#t=<title>&r=<public host>&m=<message folder>&i=P0.jpg,V1.mp4,...
+    Each file at https://<host>/hd/<folder>/<name>, its grid picture at <n>_t.jpg beside it.
+    Videos play in the phone's own player at full quality.
+
+  Google Drive (older links):
+    g.html#t=<title>&f=<drive folder id>&i=p<photo id>,v<video id>,...
+    Photos load from Drive's image server. Videos can't: Google refuses to let another site's
+    page play a Drive video - its download address answers 403, and its API, with a key,
+    streamed briefly then blocked it as "automated queries" (2026-09-26). So a Drive video
+    offers Drive's own player instead. That dead end is why storage moved to R2.
 -->
 <style>
   :root {
@@ -151,9 +156,22 @@
     if (i > 0) params[pair.slice(0, i)] = decodeURIComponent(pair.slice(i + 1));
   });
   var ID = /^[A-Za-z0-9_-]{10,}$/;
+  var NAME = /^[0-9]+\.[A-Za-z0-9]{1,5}$/;
+  var host = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(params.r || "") ? params.r : null;
+  var folderR2 = /^[A-Za-z0-9]{10,}$/.test(params.m || "") ? params.m : null;
+  var r2Base = host && folderR2 ? "https://" + host + "/hd/" + folderR2 + "/" : null;
+
+  // Uppercase P/V: an R2 file by its name in the message's folder. Lowercase p/v: a Drive id.
   var items = (params.i || "").split(",").map(function (s) {
-    return { video: s.charAt(0) === "v", id: s.slice(1) };
-  }).filter(function (it) { return ID.test(it.id); });
+    var kind = s.charAt(0);
+    if ((kind === "P" || kind === "V") && r2Base && NAME.test(s.slice(1))) {
+      return { r2: true, video: kind === "V", name: s.slice(1) };
+    }
+    if ((kind === "p" || kind === "v") && ID.test(s.slice(1))) {
+      return { r2: false, video: kind === "v", id: s.slice(1) };
+    }
+    return null;
+  }).filter(Boolean);
   var folder = ID.test(params.f || "") ? params.f : null;
 
   var app = document.getElementById("app");
@@ -164,20 +182,14 @@
 
   // Drive's image server: w800 for the grid, s0 for the original, full quality.
   function img(id, size) { return "https://lh3.googleusercontent.com/d/" + id + "=" + size; }
-  // Drive's download address: for the ↗ button. Tapping it is a visit, which Drive allows.
-  function original(id) { return "https://drive.usercontent.google.com/download?id=" + id + "&export=download&confirm=t"; }
-
-  // Videos stream through the Drive API: the original file, in the phone's own player, at the
-  // quality it was shot in. Not through the download address above - Drive answers 403 to any
-  // other website's page asking to play from it, which is what showed as Safari's crossed-out
-  // play icon (2026-09-26). The API allows it, with a key: a public identifier for the Cloud
-  // project, restricted to the Drive API and to this site, that can only read files already
-  // shared by link. If the stream fails anyway, the slide says so and offers Drive's own
-  // player or the download - never switching on its own: an automatic switch to Drive's
-  // player brought back the doubled controls and 360p (2026-09-26).
-  var VIDEO_API_KEY = "AIzaSyCIFkkqKjMxYTk1wea6_MQqjNrSIZ-_Uwk";
-  function stream(id) { return "https://www.googleapis.com/drive/v3/files/" + id + "?alt=media&key=" + VIDEO_API_KEY; }
+  // Drive's download address. Tapping it is a visit, which Drive allows.
+  function driveDownload(id) { return "https://drive.usercontent.google.com/download?id=" + id + "&export=download&confirm=t"; }
   function drivePage(id) { return "https://drive.google.com/file/d/" + id + "/view"; }
+
+  /** The file itself, full size - what the viewer shows and the ↗ button opens. */
+  function fullUrl(it) { return it.r2 ? r2Base + it.name : it.video ? driveDownload(it.id) : img(it.id, "s0"); }
+  /** The small picture for the grid (and a video's poster). */
+  function thumbUrl(it) { return it.r2 ? r2Base + it.name.replace(/\.[^.]+$/, "") + "_t.jpg" : img(it.id, "w800"); }
 
   var photos = items.filter(function (it) { return !it.video; }).length;
   var videos = items.length - photos;
@@ -223,13 +235,22 @@
   var grid = el("div", { class: "grid" });
   items.forEach(function (it, index) {
     var tile = el("button", { class: "tile", "aria-label": (it.video ? "Video " : "Photo ") + (index + 1) });
-    var thumb = el("img", { src: img(it.id, "w800"), alt: "", loading: index < 8 ? "eager" : "lazy", decoding: "async" });
+    var thumb = el("img", { src: thumbUrl(it), alt: "", loading: index < 8 ? "eager" : "lazy", decoding: "async" });
     tile.appendChild(thumb);
-    // Drive makes a video's still a minute or two after upload, and the link can arrive
-    // sooner - the video itself plays from the first second. So a video with no still yet
-    // is just a dark tile with its play mark, not "No longer available".
-    if (it.video) thumb.addEventListener("error", function () { thumb.remove(); });
-    else onGone(thumb, tile);
+    if (it.video) {
+      // No still (Drive makes one minutes after upload; the app's can fail to make): a dark
+      // tile with its play mark, not "No longer available" - the video itself may be fine.
+      thumb.addEventListener("error", function () { thumb.remove(); });
+    } else if (it.r2) {
+      // An R2 photo without its grid picture falls back to the photo itself, once.
+      thumb.addEventListener("error", function onError() {
+        thumb.removeEventListener("error", onError);
+        onGone(thumb, tile);
+        thumb.src = fullUrl(it);
+      });
+    } else {
+      onGone(thumb, tile);
+    }
     if (it.video) tile.appendChild(el("div", { class: "play" }, [el("span")]));
     tile.addEventListener("click", function () { open(index); });
     grid.appendChild(tile);
@@ -262,22 +283,25 @@
         var video = s.querySelector("video");
         if (i === index && !s.firstChild) {
           s.classList.add("video");
-          if (VIDEO_API_KEY) {
+          if (it.r2) {
+            // The phone's own player, on the original file - one set of controls, full
+            // quality. If it can't, the slide says so and offers the file; it never swaps in
+            // another player on its own.
             video = el("video", {
-              src: stream(it.id), poster: img(it.id, "w1600"),
+              src: fullUrl(it), poster: thumbUrl(it),
               controls: "", playsinline: "", preload: "metadata", "aria-label": "Video " + (i + 1)
             });
-            video.addEventListener("error", function () { cantPlay(s, it.id, video.error && video.error.code); });
+            video.addEventListener("error", function () { cantPlay(s, it, video.error && video.error.code); });
             s.appendChild(video);
           } else {
-            cantPlay(s, it.id, "no key");
+            cantPlay(s, it, null);
           }
         } else if (i !== index && video) {
           video.pause();
         }
       } else if (near && !s.firstChild) {
         var spin = el("div", { class: "spinner" });
-        var image = el("img", { src: img(it.id, "s0"), alt: "Photo " + (i + 1), decoding: "async" });
+        var image = el("img", { src: fullUrl(it), alt: "Photo " + (i + 1), decoding: "async" });
         image.addEventListener("load", function () { spin.remove(); });
         image.addEventListener("error", function () { spin.remove(); });
         onGone(image, s);
@@ -287,14 +311,17 @@
     });
   }
 
-  function cantPlay(slide, id, why) {
+  /**
+   * A video this page can't play: an R2 one that failed (with the player's error code, for
+   * diagnosis) or any Drive one, which Google won't let a page like this play.
+   */
+  function cantPlay(slide, it, why) {
     slide.innerHTML = "";
-    slide.appendChild(el("div", { class: "cant" }, [
-      el("p", { text: "This video can't play here." }),
-      el("a", { href: drivePage(id), target: "_blank", rel: "noopener", text: "Watch in Google Drive" }),
-      el("a", { href: original(id), target: "_blank", rel: "noopener", text: "Download" }),
-      el("small", { text: "(" + (why || "error") + ")" })
-    ]));
+    var parts = [el("p", { text: it.r2 ? "This video can't play here." : "This video plays in Google Drive." })];
+    if (!it.r2) parts.push(el("a", { href: drivePage(it.id), target: "_blank", rel: "noopener", text: "Watch in Google Drive" }));
+    parts.push(el("a", { href: fullUrl(it), target: "_blank", rel: "noopener", text: "Download" }));
+    if (why) parts.push(el("small", { text: "(" + why + ")" }));
+    slide.appendChild(el("div", { class: "cant" }, parts));
   }
 
   function show(index) {
@@ -303,7 +330,7 @@
     count.textContent = items.length > 1 ? (index + 1) + " / " + items.length : "";
     // Photos: the original, where press-and-hold saves it. Videos: the file itself, which
     // the phone offers to download.
-    full.href = items[index].video ? original(items[index].id) : img(items[index].id, "s0");
+    full.href = fullUrl(items[index]);
     fill(index);
   }
 
